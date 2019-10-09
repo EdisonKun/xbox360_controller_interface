@@ -7,7 +7,7 @@ project(xbox360_controller_interface)
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
-find_package(catkin REQUIRED 
+find_package(catkin REQUIRED
   geometry_msgs
   sensor_msgs
   free_gait_msgs
@@ -146,6 +146,7 @@ include_directories(
 ## The recommended prefix ensures that target names across packages don't collide
  add_executable(joy_to_twist_node src/joy_to_twist.cpp)
  add_executable(quadruped_teleop_node src/quadruped_teleop.cpp)
+ add_executable(quadruped_joy_control_node src/quadruped_joy_control.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -165,6 +166,11 @@ include_directories(
 target_link_libraries(quadruped_teleop_node
   ${catkin_LIBRARIES}
 )
+
+target_link_libraries(quadruped_joy_control_node
+  ${catkin_LIBRARIES}
+)
+
 
 #############
 ## Install ##

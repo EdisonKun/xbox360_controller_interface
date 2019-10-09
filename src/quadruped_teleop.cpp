@@ -326,8 +326,6 @@ void QuadrupedTeleOp::commandUpdate()
               kindr::RotationQuaternionD q_base, q_target;
               q_base = kindr::EulerAnglesXyzD(target_euler_.x, target_euler_.y, target_euler_.z);
               q_target = q_base*base_to_odom_.getRotation();
-    //          tf::Quaternion q;
-    //          q.setRPY(target_euler_.x, target_euler_.y, target_euler_.z);
               target_q.w = q_target.w();
               target_q.x = q_target.x();
               target_q.y = q_target.y();
