@@ -9,11 +9,14 @@
 #include <free_gait_msgs/ExecuteStepsAction.h>
 #include <actionlib/client/simple_action_client.h>
 #include <std_msgs/Bool.h>
+#include <std_srvs/SetBool.h>
+#include <std_srvs/Trigger.h>
 #include <geometry_msgs/Pose.h>
 #include <geometry_msgs/Point.h>
 #include <kindr_ros/kindr_ros.hpp>
 #include <tf/transform_listener.h>
 #include <kindr/Core>
+#include <free_gait_ros/gait_generate_client.hpp>
 
 class QuadrupedTeleOp
 {
@@ -23,7 +26,7 @@ public:
     void publishDirectJointCommand();
     int directJointFlag_;
 private:
-  void joyCallback(const sensor_msgs::Joy::ConstPtr& joy);
+  void joyCallback(const sensor_msgs::Joy::ConstPtr& joy);  
   void commandUpdate();
 
   ros::NodeHandle nh_;
@@ -36,13 +39,14 @@ private:
   double l_scale_, a_scale_;
   std::string actionServerTopic_;
   geometry_msgs::Twist twist, legTwist;
-
   free_gait_msgs::ExecuteStepsGoal step_goal;
   float leftStickLR ,leftStickUD,LT,rightStickLR ,rightStickUD, RT, crossKeyLR, crossKeyUD;//1/-1
   int keyA, keyB, keyX, keyY, LB, RB, keyBack, keyStart, keyPower;//0/1
 
   ros::Publisher vel_pub_, eStopPublisher_, legMovePub_, cartesianDiffPub_,jointCommandPub_, homingCommandPub_, emergencyStopPub_, resetCommandPub_;
   ros::Subscriber joy_sub_;
+  ros::ServiceClient trotswitchClient_, paceswitchClient_;
+
   //! Step action client.
   std::unique_ptr<actionlib::SimpleActionClient<free_gait_msgs::ExecuteStepsAction>> stepActionClient_;
 
@@ -81,11 +85,13 @@ QuadrupedTeleOp::QuadrupedTeleOp(ros::NodeHandle& nodehandle):
   rf_pos_.y = -0.25;
   rf_pos_.z = 0.1;
 
-  nh_.param("scale_angular", a_scale_, 1.0);
-  nh_.param("scale_linear", l_scale_, 1.0);
+
+  nh_.param("scale_angular", a_scale_, 1.2);
+  ROS_INFO_STREAM("the value of a_scale is " << a_scale_ << std::endl);
+  nh_.param("scale_linear", l_scale_, 1.2);
   nh_.param("action_server_topic", actionServerTopic_,
                     std::string("/free_gait/action_server"));
-  ROS_INFO("augular scale is %f, linear scale is %f",a_scale_,l_scale_);
+  ROS_INFO("test,augular scale is %f, linear scale is %f",a_scale_,l_scale_);
 
   stepActionClient_ = std::unique_ptr<
       actionlib::SimpleActionClient<free_gait_msgs::ExecuteStepsAction>>(
@@ -95,12 +101,16 @@ QuadrupedTeleOp::QuadrupedTeleOp(ros::NodeHandle& nodehandle):
   vel_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel", 1);
   joy_sub_ = nh_.subscribe<sensor_msgs::Joy>("/joy", 10, &QuadrupedTeleOp::joyCallback, this);
 
+  trotswitchClient_ = nh_.serviceClient<std_srvs::SetBool>("/gait_generate_switch", false);
+  paceswitchClient_ = nh_.serviceClient<std_srvs::SetBool>("/pace_switch", false);
+
   commandUpdateThread_ = boost::thread(boost::bind(&QuadrupedTeleOp::commandUpdate, this));
 }
 
 void QuadrupedTeleOp::joyCallback(const sensor_msgs::Joy::ConstPtr& joy)
 {
 
+    //sudo jstest /dev/input/jsX chenk the axis and button
   free_gait_msgs::ExecuteStepsGoal step_goal;
   leftStickLR = joy->axes[0];//contiunus 1~-1
   leftStickUD = joy->axes[1];//contiunus 1~-1
@@ -120,19 +130,11 @@ void QuadrupedTeleOp::joyCallback(const sensor_msgs::Joy::ConstPtr& joy)
   keyStart = joy->buttons[7];//0/1
   keyPower = joy->buttons[8];//0/1
 
+  ROS_INFO_STREAM("the status of the crosskey ud is"<< crossKeyUD << std::endl);
+
   float velocityScale = l_scale_*RT +1;
   float angularScale = a_scale_*LT +1;
 
-  if(keyStart == 1)
-  {
-      ROS_INFO("Reset Emergency Stop");
-      std_msgs::Bool e_stop_msg;
-      e_stop_msg.data = false;
-
-      eStopPublisher_.publish(e_stop_msg);
-
-      eStopFlag_ = 0;
-  }
   if(keyPower == 1)
   {
       ROS_INFO("Emergency Stop");
@@ -144,10 +146,7 @@ void QuadrupedTeleOp::joyCallback(const sensor_msgs::Joy::ConstPtr& joy)
       return;
   }
 
-
 }
-
-
 void QuadrupedTeleOp::commandUpdate()
 {
   ros::Rate rate(10);
@@ -178,7 +177,7 @@ void QuadrupedTeleOp::commandUpdate()
         ROS_ERROR("%s", ex.what());
       }
 
-      if(keyBack == 1)
+      if(keyBack == 1)//sit down
         {
           ROS_INFO("Reset Initial Quadruped State");
           free_gait_msgs::Step initial_steps;
@@ -188,10 +187,25 @@ void QuadrupedTeleOp::commandUpdate()
           base_auto_msg.average_angular_velocity = 0.1;
           initial_steps.base_auto.push_back(base_auto_msg);
           step_goal.steps.push_back(initial_steps);
-
           stepActionClient_->sendGoal(step_goal);
           stepActionClient_->waitForResult();
           setInitialStateFlag_ = 1;
+        }
+
+        if(keyStart == 1)//stand up
+        {
+            ROS_INFO("The robot is standing up~");
+            free_gait_msgs::Step initial_steps;
+            free_gait_msgs::BaseAuto base_auto_msg;
+            base_auto_msg.height = 0.5;
+            base_auto_msg.average_linear_velocity = 0.2;
+            base_auto_msg.average_angular_velocity = 0.1;
+            initial_steps.base_auto.push_back(base_auto_msg);
+            step_goal.steps.push_back(initial_steps);
+
+            stepActionClient_->sendGoal(step_goal);
+            stepActionClient_->waitForResult();
+            setInitialStateFlag_ = 1;
         }
 
     //    linearX_ = 0;
@@ -212,18 +226,41 @@ void QuadrupedTeleOp::commandUpdate()
           trotFlag_ = 1;
           paceFlag_ = 0;
           standFlag_ = 0;
+          std_srvs::SetBool trot_switch;
+          trot_switch.request.data = true;
+          trotswitchClient_.call(trot_switch.request, trot_switch.response);
+          if(trot_switch.response.success)
+          {
+              ROS_INFO_STREAM("get the trot response success" << std::endl);
+          }
         }else if (crossKeyLR == -1) {
           // Pace
           ROS_INFO("Set Pace Flag");
           trotFlag_ = 0;
           paceFlag_ = 1;
           standFlag_ = 0;
+          std_srvs::SetBool pace_switch;
+          pace_switch.request.data = true;
+          paceswitchClient_.call(pace_switch.request, pace_switch.response);
+          if (pace_switch.response.success)
+          {
+              ROS_INFO_STREAM("Get the pace response success" << std::endl);
+          }
         }else if (crossKeyUD == 1) {
           // Stand and stop gait
           ROS_INFO("Set Stand Flag");
           trotFlag_ = 0;
           paceFlag_ = 0;
-          standFlag_ = 1;
+          standFlag_ = 1;          
+        }
+        else if (crossKeyUD == -1) {
+            trotFlag_ = 0;
+            paceFlag_ = 0;
+            standFlag_ = 0;
+            std_srvs::SetBool gait_stop_switch;
+            gait_stop_switch.request.data = false;
+            trotswitchClient_.call(gait_stop_switch.request, gait_stop_switch.response);
+            paceswitchClient_.call(gait_stop_switch.request, gait_stop_switch.response);
         }
       //! WSHY: Set velocity
       if(trotFlag_)
@@ -266,9 +303,9 @@ void QuadrupedTeleOp::commandUpdate()
             {
             // For Position
 
-              target_position_.x = leftStickUD*0.2;
-              target_position_.y = leftStickLR*0.2;
-              target_position_.z = rightStickUD*0.3;
+              target_position_.x = leftStickUD*0.05;
+              target_position_.y = leftStickLR*0.05;
+              target_position_.z = rightStickUD*0.1;
 
               kindr::Position3D target_in_base, target_in_odom;
               kindr_ros::convertFromRosGeometryMsg(target_position_,target_in_base);
@@ -283,8 +320,8 @@ void QuadrupedTeleOp::commandUpdate()
               target_in_odom = base_to_odom_.getPosition() + base_to_odom_.getRotation().rotate(target_in_base);
               kindr_ros::convertToRosGeometryMsg(target_in_odom, target_position);
 
-              target_euler_.x = leftStickLR*0.5;
-              target_euler_.y = leftStickUD*0.5;
+              target_euler_.x = leftStickLR*0.1;
+              target_euler_.y = leftStickUD*0.1;
               target_euler_.z = rightStickLR*0.5;
               kindr::RotationQuaternionD q_base, q_target;
               q_base = kindr::EulerAnglesXyzD(target_euler_.x, target_euler_.y, target_euler_.z);
@@ -301,8 +338,8 @@ void QuadrupedTeleOp::commandUpdate()
               base_target_msg.target.pose.orientation = target_q;
               base_target_msg.target.pose.position = target_position;
           }
-          base_target_msg.average_linear_velocity = 0.1;
-          base_target_msg.average_angular_velocity = 0.2;
+          base_target_msg.average_linear_velocity = 0.2;
+          base_target_msg.average_angular_velocity = 0.3;
           base_target_msg.ignore_timing_of_leg_motion = true;
 
 
@@ -464,7 +501,6 @@ int main(int argc, char** argv)
     QuadrupedTeleOp teleop_turtle(nh);
     ros::Rate rate(50);
     while (ros::ok()) {
-//        teleop_turtle.publishCommand();
         rate.sleep();
         ros::spinOnce();
     }

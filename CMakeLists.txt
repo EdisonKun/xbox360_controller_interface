@@ -11,6 +11,7 @@ find_package(catkin REQUIRED
   geometry_msgs
   sensor_msgs
   free_gait_msgs
+  free_gait_ros
   actionlib
   kindr_ros
   roscpp
